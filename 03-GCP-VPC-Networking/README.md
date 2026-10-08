@@ -1,753 +1,413 @@
-# GCP VPC Networking
+In this lab, we will understand and implement:
 
-**Trainer:** Rushi 
-**Platform:** Google Cloud Platform (GCP)
-
----
-
-## 1. What is a VPC?
-
-VPC stands for **Virtual Private Cloud**.
-
-A VPC is a logically isolated network environment in Google Cloud where we can deploy and communicate with resources such as:
-
-- Virtual Machines
-- GKE workloads
-- Databases
-- Load Balancers
-- Other cloud resources
-
-A simple way to understand it:
-
-```text
-GCP Project
-     |
-     └── VPC Network
-             |
-             ├── Subnet
-             │     ├── VM
-             │     └── VM
-             │
-             └── Subnet
-                   ├── VM
-                   └── VM
-```
+- Communication between VMs in the same VPC
+- VPC-to-VPC communication using VPC Peering
+- VPC Peering between multiple VPCs
+- Non-transitive VPC Peering
 
 ---
 
-# 2. Why Do We Need a VPC?
+# 1. Lab Architecture
 
-A VPC provides the networking environment required for cloud resources to communicate.
-
-For example, consider a banking application:
+We are using three VPC networks.
 
 ```text
-Internet
-   |
-   ▼
-Load Balancer
-   |
-   ▼
-Web Servers
-   |
-   ▼
-Application Servers
-   |
-   ▼
-Database
-```
-
-The different components need controlled network communication.
-
-A VPC helps us design this network.
-
----
-
-# 3. VPC and Subnet
-
-One important concept to remember:
-
-```text
-VPC
- |
- ├── Subnet 1
- |
- ├── Subnet 2
- |
- └── Subnet 3
-```
-
-### VPC
-
-A VPC is the overall network environment.
-
-### Subnet
-
-A subnet is an IP address range inside a VPC.
-
-In Google Cloud:
-
-> **VPC is global, while a subnet is regional.**
-
-Example:
-
-```text
-VPC
- |
- ├── us-central1 subnet
- |
- ├── asia-south1 subnet
- |
- └── europe-west1 subnet
-```
----
-
-# 4. Default VPC
-
-When a Google Cloud project is created, it may have a default VPC network depending on the project's configuration and organization policies.
-
-The default network is generally created as an **auto mode VPC**.
-
-For learning, the default VPC is useful.
-
-For production environments, organizations commonly prefer a planned **custom-mode VPC** so that they can explicitly control:
-
-- IP address ranges
-- Subnets
-- Regions
-- Network architecture
-- Firewall rules
-
----
-
-# 5. Custom VPC
-
-For our training labs, we will create custom VPC networks.
-
-Example:
-
-```bash
-gcloud compute networks create banking-app-vpc1 \
-  --subnet-mode=custom
-```
-
-Here:
-
-```text
+VPC 1
 banking-app-vpc1
-        |
-        └── Custom VPC
-```
-
----
-
-# 6. Creating a Subnet
-
-Example:
-
-```bash
-gcloud compute networks subnets create banking-app-subnet1 \
-  --network=banking-app-vpc1 \
-  --region=us-central1 \
-  --range=10.10.0.0/24
-```
-
-Here:
-
-| Parameter | Meaning |
-|---|---|
-| `banking-app-subnet1` | Subnet name |
-| `--network` | VPC network |
-| `--region` | Region where subnet is created |
-| `--range` | IPv4 CIDR range |
-
-Architecture:
-
-```text
-banking-app-vpc1
-       |
-       └── banking-app-subnet1
-             |
-             └── 10.10.0.0/24
-```
-
----
-
-# 7. CIDR
-
-CIDR stands for:
-
-**Classless Inter-Domain Routing**
-
-Example:
-
-```text
 10.10.0.0/24
-```
 
-The `/24` represents the number of network-prefix bits.
+    ├── banking-app-vm1
+    │
+    └── banking-app-vm2
 
-IPv4 contains 32 bits.
 
-Therefore:
+                │
+                │ VPC PEERING
+                ▼
 
-```text
-32 - 24 = 8 host bits
-```
 
-Total mathematical addresses:
-
-```text
-2^8 = 256
-```
-
-### Common CIDR Examples
-
-| CIDR | Total IPv4 Addresses |
-|---|---:|
-| `/32` | 1 |
-| `/31` | 2 |
-| `/30` | 4 |
-| `/29` | 8 |
-| `/28` | 16 |
-| `/27` | 32 |
-| `/26` | 64 |
-| `/25` | 128 |
-| `/24` | 256 |
-| `/16` | 65,536 |
-
-> Cloud platforms may reserve addresses, so the number of usable/assignable addresses can be smaller than the mathematical total.
-
----
-
-# 8. Private IP Address Ranges
-
-RFC 1918 defines the commonly used private IPv4 ranges:
-
-```text
-10.0.0.0/8
-
-172.16.0.0/12
-
-192.168.0.0/16
-```
-
-These addresses are commonly used for internal networking.
-
-Example:
-
-```text
-10.10.0.0/24
+VPC 2
+banking-data-vpc2
 10.20.0.0/24
+
+    └── banking-data-vm2
+
+
+                │
+                │ VPC PEERING
+                ▼
+
+
+VPC 3
+banking-monitoring-vpc3
 10.30.0.0/24
+
+    └── banking-monitoring-vm3
 ```
 
 ---
 
-# 9. Public IP vs Private IP
+# 2. Network Details
 
-### Private/Internal IP
+| VPC | Subnet | CIDR |
+|---|---|---|
+| `banking-app-vpc1` | `banking-app-subnet1` | `10.10.0.0/24` |
+| `banking-data-vpc2` | `banking-data-subnet2` | `10.20.0.0/24` |
+| `banking-monitoring-vpc3` | `banking-monitoring-subnet3` | `10.30.0.0/24` |
 
-Used for communication inside private networks.
+### VMs
 
-Example:
-
-```text
-VM1
-10.10.0.2
-   |
-   | Private Communication
-   ▼
-VM2
-10.10.0.3
-```
-
-### Public/External IP
-
-Used when a resource needs internet-facing connectivity.
-
-Example:
-
-```text
-Internet
-   |
-   ▼
-Public IP
-   |
-   ▼
-VM
-```
-
-In a typical application architecture, internal components can communicate using private IP addresses.
-
-```text
-Load Balancer
-      |
-      ▼
-Web Server
-      |
-      ▼
-Application Server
-      |
-      ▼
-Database
-```
+| VM | VPC |
+|---|---|
+| `banking-app-vm1` | VPC1 |
+| `banking-app-vm2` | VPC1 |
+| `banking-data-vm2` | VPC2 |
+| `banking-monitoring-vm3` | VPC3 |
 
 ---
 
-# 10. Same VPC Communication
+# 3. Step 1 — Same VPC Communication
 
-Two VMs inside the same VPC can communicate using their internal IP addresses when routing and firewall rules allow the traffic.
-
-Example:
+Before VPC Peering, we first verify communication between two VMs in the same VPC.
 
 ```text
-banking-app-vpc1
-10.10.0.0/24
-       |
-       ├── banking-app-vm1
-       │      10.10.0.2
+banking-app-vm1
        │
-       └── banking-app-vm2
-              10.10.0.3
+       │ Same VPC
+       │ Same Subnet
+       ▼
+banking-app-vm2
 ```
 
-Communication:
+Get private IP addresses:
+
+```bash
+gcloud compute instances list \
+  --format="table(name,networkInterfaces[0].networkIP,networkInterfaces[0].network)"
+```
+
+SSH to VM1:
+
+```bash
+gcloud compute ssh banking-app-vm1 \
+  --zone=us-central1-a
+```
+
+Ping VM2:
+
+```bash
+ping -c 4 <VM2_PRIVATE_IP>
+```
+
+Expected:
 
 ```text
-VM1 ─────────────► VM2
-       Private IP
+VM1 → VM2 ✅
 ```
 
-This is the first concept we demonstrate in our hands-on lab.
+Now test the reverse direction.
+
+```bash
+exit
+```
+
+SSH to VM2:
+
+```bash
+gcloud compute ssh banking-app-vm2 \
+  --zone=us-central1-a
+```
+
+Ping VM1:
+
+```bash
+ping -c 4 <VM1_PRIVATE_IP>
+```
+
+Expected:
+
+```text
+VM2 → VM1 ✅
+```
+
+### Result
+
+```text
+Same VPC
+   ↓
+Same Subnet
+   ↓
+Private IP Communication
+```
 
 ---
 
-# 11. Communication Across Regions
+# 4. Step 2 — VPC1 ↔ VPC2 Peering
 
-A VPC is global, while subnets are regional.
-
-Therefore, a VPC can contain subnets in different regions.
-
-Example:
-
-```text
-                    VPC
-                     |
-       ┌─────────────┼─────────────┐
-       |             |             |
-       ▼             ▼             ▼
-us-central1     asia-south1    europe-west1
- Subnet          Subnet          Subnet
-```
-
-Resources in different regions can communicate when the required routes and firewall rules allow the traffic.
-
----
-
-# 12. Different VPC Networks
-
-Suppose we have:
+Now we have:
 
 ```text
 VPC1
- |
- └── VM1
+banking-app-vpc1
+
+        │
+        │ PEERING
+        ▼
 
 VPC2
- |
- └── VM2
+banking-data-vpc2
 ```
 
-By default, separate VPC networks do not automatically communicate with each other.
+Create peering from VPC1:
 
-We need a connectivity mechanism.
+```bash
+gcloud compute networks peerings create app-to-data-peering \
+  --network=banking-app-vpc1 \
+  --peer-network=banking-data-vpc2
+```
 
-One option is:
+Create the corresponding peering from VPC2:
+
+```bash
+gcloud compute networks peerings create data-to-app-peering \
+  --network=banking-data-vpc2 \
+  --peer-network=banking-app-vpc1
+```
+
+Check status:
+
+```bash
+gcloud compute networks peerings list
+```
+
+Both peering relationships should become:
 
 ```text
-VPC1
- |
- | VPC Peering
- |
- VPC2
+ACTIVE
 ```
 
 ---
 
-# 13. VPC Network Peering
+# 5. Step 3 — Test VPC1 ↔ VPC2
 
-VPC Network Peering allows two VPC networks to communicate privately.
+Get the private IP of the data VM:
 
-Example:
+```bash
+gcloud compute instances describe banking-data-vm2 \
+  --zone=us-central1-a \
+  --format="get(networkInterfaces[0].networkIP)"
+```
+
+From VM1:
+
+```bash
+ping -c 4 <DATA_VM_PRIVATE_IP>
+```
+
+Expected:
+
+```text
+VPC1 → VPC2 ✅
+```
+
+Test the reverse direction:
+
+```text
+VPC2 → VPC1 ✅
+```
+
+---
+
+# 6. Step 4 — VPC2 ↔ VPC3 Peering
+
+Now establish the second peering connection.
 
 ```text
 VPC1
-10.10.0.0/24
-   |
-   |
-   | VPC PEERING
-   |
-   ▼
+  │
+  │ PEERING
+  ▼
 VPC2
-10.20.0.0/24
+  │
+  │ PEERING
+  ▼
+VPC3
 ```
 
-The VPCs remain separate networks, but routes are exchanged between the peered networks.
+Create peering from VPC2:
 
-Firewall rules still control whether traffic is allowed.
+```bash
+gcloud compute networks peerings create data-to-monitoring-peering \
+  --network=banking-data-vpc2 \
+  --peer-network=banking-monitoring-vpc3
+```
 
----
+Create the corresponding peering from VPC3:
 
-# 14. VPC Peering Requirements
+```bash
+gcloud compute networks peerings create monitoring-to-data-peering \
+  --network=banking-monitoring-vpc3 \
+  --peer-network=banking-data-vpc2
+```
 
-When using VPC Network Peering, remember:
+Check:
 
-### 1. IP ranges must not overlap
+```bash
+gcloud compute networks peerings list
+```
 
-Example:
+Expected:
 
 ```text
-VPC1 → 10.10.0.0/24
-
-VPC2 → 10.20.0.0/24
+app-to-data-peering
+data-to-app-peering
+data-to-monitoring-peering
+monitoring-to-data-peering
 ```
 
-Good.
-
-But:
+All should be:
 
 ```text
-VPC1 → 10.10.0.0/24
-
-VPC2 → 10.10.0.0/24
+ACTIVE
 ```
-
-Overlapping ranges are a problem for peering.
 
 ---
 
-### 2. Both VPCs need the peering relationship configured
+# 7. Step 5 — Test VPC2 ↔ VPC3
 
-Example:
+Get VM3 private IP:
+
+```bash
+gcloud compute instances describe banking-monitoring-vm3 \
+  --zone=us-central1-a \
+  --format="get(networkInterfaces[0].networkIP)"
+```
+
+From `banking-data-vm2`:
+
+```bash
+ping -c 4 <VM3_PRIVATE_IP>
+```
+
+Expected:
 
 ```text
-VPC1 ─────── VPC2
+VM2 → VM3 ✅
 ```
 
-The peering relationship is configured on both sides.
+Test reverse communication:
+
+```text
+VM3 → VM2 ✅
+```
 
 ---
 
-### 3. Firewall rules still apply
+# 8. Step 6 — Non-Transitive Peering
 
-Peering provides connectivity, but firewall rules determine whether traffic is allowed.
-
----
-
-### 4. VPC Peering is not transitive
-
-This is one of the most important concepts.
+Our current topology is:
 
 ```text
 VPC1
-  |
-  | Peering
-  |
- VPC2
-  |
-  | Peering
-  |
- VPC3
+ │
+ │ PEERING
+ ▼
+VPC2
+ │
+ │ PEERING
+ ▼
+VPC3
 ```
 
-It does NOT automatically mean:
-
-```text
-VPC1 ─────────► VPC3
-```
-
-Therefore:
+We have:
 
 ```text
 VPC1 ↔ VPC2    ✅
 
 VPC2 ↔ VPC3    ✅
-
-VPC1 ↔ VPC3    ❌
 ```
 
-This is called:
-
-> **Non-transitive peering**
-
----
-
-# 15. Firewall Rules
-
-Firewall rules control traffic entering or leaving resources in a VPC.
-
-Example:
-
-```bash
-gcloud compute firewall-rules create banking-app-allow-ssh \
-  --network=banking-app-vpc1 \
-  --direction=INGRESS \
-  --action=ALLOW \
-  --rules=tcp:22 \
-  --source-ranges=0.0.0.0/0 \
-  --target-tags=banking-app
-```
-
-This allows SSH traffic on TCP port 22 for instances targeted by the `banking-app` tag.
-
----
-
-# 16. Firewall Priority
-
-Firewall rules have a priority.
-
-Important rule:
-
-> **Lower number = higher priority**
-
-Example:
+But we have **not** created:
 
 ```text
-Priority 900
-     ↓
-Higher priority
-
-Priority 1000
-     ↓
-Lower than 900
-
-Priority 1100
-     ↓
-Lower than 1000
+VPC1 ↔ VPC3
 ```
 
 Therefore:
 
 ```text
-900 > 1000 > 1100
+VPC1 → VPC3    ❌
 ```
 
-Here `>` means **higher priority**, not a larger numerical value.
+### Important Concept
 
-The default priority used when one isn't specified is commonly `1000`.
+> **VPC Network Peering is not transitive.**
+
+VPC2 cannot act as a transit network between VPC1 and VPC3.
 
 ---
 
-# 17. ICMP
-
-ICMP stands for:
-
-**Internet Control Message Protocol**
-
-ICMP is a network-layer protocol.
-
-It is commonly used for network diagnostics.
-
-For example:
-
-```bash
-ping 10.10.0.3
-```
-
-Ping commonly uses:
+# 9. Final Connectivity
 
 ```text
-ICMP Echo Request
-        ↓
-ICMP Echo Reply
+banking-app-vm1
+       │
+       │ Same VPC
+       ▼
+banking-app-vm2
+       │
+       │
+       │ VPC1 ↔ VPC2
+       ▼
+banking-data-vm2
+       │
+       │
+       │ VPC2 ↔ VPC3
+       ▼
+banking-monitoring-vm3
 ```
 
-ICMP does not use TCP or UDP ports.
+Expected results:
 
-Therefore, we use:
-
-```bash
---rules=icmp
-```
-
-not:
-
-```text
-icmp:80
-```
+| Communication | Result |
+|---|---|
+| VM1 → VM2 | ✅ |
+| VM2 → VM1 | ✅ |
+| VPC1 → VPC2 | ✅ |
+| VPC2 → VPC1 | ✅ |
+| VM2 → VM3 | ✅ |
+| VM3 → VM2 | ✅ |
+| VPC1 → VPC3 | ❌ |
 
 ---
 
-# 18. Ingress and Egress
+# 10. Important Commands
 
-### Ingress
-
-Traffic coming **into** a resource.
-
-```text
-Internet
-   |
-   | INGRESS
-   ▼
-VM
-```
-
-### Egress
-
-Traffic going **out** of a resource.
-
-```text
-VM
- |
- | EGRESS
- ▼
-Internet
-```
-
-Example of an egress rule:
-
-```bash
-gcloud compute firewall-rules create deny-internet-egress \
-  --direction=EGRESS \
-  --priority=900 \
-  --network=banking-app-vpc1 \
-  --action=DENY \
-  --rules=tcp:80,tcp:443 \
-  --destination-ranges=0.0.0.0/0
-```
-
-This is a broad demonstration rule and should not be used casually in production.
-
----
-
-# 19. VPC Peering Lab
-
-Our hands-on project uses three VPCs.
-
-```text
-VPC1
-banking-app-vpc1
-10.10.0.0/24
-
-VPC2
-banking-data-vpc2
-10.20.0.0/24
-
-VPC3
-banking-monitoring-vpc3
-10.30.0.0/24
-```
-
-Architecture:
-
-```text
-VPC1
- │
- │ PEERING
- ▼
-VPC2
- │
- │ PEERING
- ▼
-VPC3
-```
-
-VMs:
-
-```text
-VPC1
- ├── banking-app-vm1
- └── banking-app-vm2
-
-VPC2
- └── banking-data-vm2
-
-VPC3
- └── banking-monitoring-vm3
-```
-
----
-
-# 20. Hands-on Lab
-
-## Create VPC1
-
-```bash
-gcloud compute networks create banking-app-vpc1 \
-  --subnet-mode=custom
-```
-
-## Create VPC1 Subnet
-
-```bash
-gcloud compute networks subnets create banking-app-subnet1 \
-  --network=banking-app-vpc1 \
-  --region=us-central1 \
-  --range=10.10.0.0/24
-```
-
-## Create VPC2
-
-```bash
-gcloud compute networks create banking-data-vpc2 \
-  --subnet-mode=custom
-```
-
-## Create VPC2 Subnet
-
-```bash
-gcloud compute networks subnets create banking-data-subnet2 \
-  --network=banking-data-vpc2 \
-  --region=us-central1 \
-  --range=10.20.0.0/24
-```
-
-## Create VPC3
-
-```bash
-gcloud compute networks create banking-monitoring-vpc3 \
-  --subnet-mode=custom
-```
-
-## Create VPC3 Subnet
-
-```bash
-gcloud compute networks subnets create banking-monitoring-subnet3 \
-  --network=banking-monitoring-vpc3 \
-  --region=us-central1 \
-  --range=10.30.0.0/24
-```
-
----
-
-# 21. Verification Commands
-
-List VPC networks:
+### List VPCs
 
 ```bash
 gcloud compute networks list
 ```
 
-List subnets:
+### List Subnets
 
 ```bash
 gcloud compute networks subnets list
 ```
 
-List VM instances:
+### List VMs
 
 ```bash
 gcloud compute instances list
 ```
 
-List firewall rules:
+### List Firewall Rules
 
 ```bash
 gcloud compute firewall-rules list
 ```
 
-List VPC peerings:
+### List VPC Peerings
 
 ```bash
 gcloud compute networks peerings list
@@ -755,133 +415,76 @@ gcloud compute networks peerings list
 
 ---
 
-# 22. Important Concepts
+# 11. Key Interview Points
 
-```text
-VPC
- ↓
-Global Network
-
-Subnet
- ↓
-Regional IP Range
-
-VM
- ↓
-Uses Subnet
-
-Firewall
- ↓
-Controls Traffic
-
-VPC Peering
- ↓
-Connects Separate VPCs
-
-Peering
- ↓
-NOT TRANSITIVE
-```
-
----
-
-# 23. Interview Questions
-
-### Q1. What is VPC?
-
-VPC stands for Virtual Private Cloud. It provides a logical network environment for cloud resources.
-
-### Q2. Is VPC regional or global?
-
-A VPC network is global. Subnets are regional.
-
-### Q3. What is a subnet?
-
-A subnet is a regional IP range inside a VPC network.
-
-### Q4. Can two VMs in the same VPC communicate?
-
-Yes, when routing and firewall rules allow the traffic.
-
-### Q5. Can two separate VPCs communicate automatically?
-
-No. A connectivity mechanism such as VPC Peering is required.
-
-### Q6. What is VPC Peering?
+### What is VPC Peering?
 
 VPC Network Peering provides private connectivity between two VPC networks.
 
-### Q7. Is VPC Peering transitive?
+### Can two VPCs communicate without peering?
 
-No.
+Not through VPC networking by default. A suitable connectivity mechanism is required.
 
-### Q8. What happens if two VPCs have overlapping IP ranges?
+### Is VPC Peering transitive?
 
-They cannot be peered using standard VPC Network Peering when the ranges conflict.
+**No.**
 
-### Q9. Does firewall configuration automatically get shared between peered VPCs?
+### If VPC1 ↔ VPC2 and VPC2 ↔ VPC3, can VPC1 communicate with VPC3?
 
-No. Each VPC maintains its own firewall rules.
+**No.**
 
-### Q10. What is ICMP?
+### Do the VPC IP ranges need to be planned carefully?
 
-ICMP stands for Internet Control Message Protocol and is commonly used for network diagnostics such as ping.
+**Yes.** Overlapping ranges are a major restriction for VPC Peering.
 
----
+### Are firewall rules automatically shared between peered VPCs?
 
-# 24. Real-Time Banking Example
-
-A company may separate workloads into different networks:
-
-```text
-                    Banking Environment
-
-        Application VPC
-        10.10.0.0/24
-              |
-              | Peering
-              ▼
-          Data VPC
-        10.20.0.0/24
-              |
-              | Peering
-              ▼
-       Monitoring VPC
-        10.30.0.0/24
-```
-
-Application servers communicate with data services using private IP addresses.
-
-Monitoring components can communicate with required systems through explicitly configured network connectivity and firewall rules.
+**No.** Each VPC maintains its own firewall rules.
 
 ---
 
-# 25. Key Takeaways
-
-Remember these points:
+# 12. Final Architecture
 
 ```text
-1. VPC = Network environment
+                 VPC PEERING LAB
 
-2. Subnet = Regional IP range inside VPC
 
-3. VPC = Global
+┌──────────────────────────────┐
+│ banking-app-vpc1             │
+│ 10.10.0.0/24                 │
+│                              │
+│  VM1 ◄────────────► VM2      │
+│                              │
+└──────────────┬───────────────┘
+               │
+               │ PEERING
+               ▼
+┌──────────────────────────────┐
+│ banking-data-vpc2            │
+│ 10.20.0.0/24                 │
+│                              │
+│       banking-data-vm2       │
+│                              │
+└──────────────┬───────────────┘
+               │
+               │ PEERING
+               ▼
+┌──────────────────────────────┐
+│ banking-monitoring-vpc3      │
+│ 10.30.0.0/24                 │
+│                              │
+│    banking-monitoring-vm3    │
+│                              │
+└──────────────────────────────┘
 
-4. Subnet = Regional
 
-5. CIDR = Defines IP range
+VM1 ↔ VM2             ✅ Same VPC
 
-6. Firewall = Controls traffic
+VPC1 ↔ VPC2           ✅ Peering
 
-7. ICMP = Used by ping
+VPC2 ↔ VPC3           ✅ Peering
 
-8. Different VPCs do not automatically communicate
-
-9. VPC Peering provides private connectivity
-
-10. VPC Peering is NOT transitive
+VPC1 ↔ VPC3           ❌ Not Transitive
 ```
 
 ---
-
-# GCP VPC Networking — End
