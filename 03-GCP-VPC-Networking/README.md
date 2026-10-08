@@ -100,7 +100,6 @@ VPC
  |
  └── europe-west1 subnet
 ```
-
 ---
 
 # 4. Default VPC
